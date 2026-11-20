@@ -1,0 +1,15 @@
+# Core & CLI
+tqdm>=4.66.0
+
+# Computer Vision & YOLO (rilevamento canestri / highlights)
+ultralytics>=8.2.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+Pillow>=10.0.0
+
+# Deep Learning / Accelerazione (opzionale per GPU NVIDIA / CUDA)
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Elaborazione Audio / Video (opzionale per analisi o supporto extra)
+scipy>=1.11.0
