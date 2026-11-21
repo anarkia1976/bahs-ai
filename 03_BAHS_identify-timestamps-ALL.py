@@ -94,6 +94,7 @@ def stampa_chiusura_03_bahs_identify_timestamps_all(successo=True):
 
 
 def seconds_to_time_str_03_bahs_identify_timestamps_all(seconds):
+    seconds = max(0.0, float(seconds))
     mins = int(seconds // 60)
     secs = int(seconds % 60)
     if mins >= 60:
@@ -101,6 +102,23 @@ def seconds_to_time_str_03_bahs_identify_timestamps_all(seconds):
         mins = mins % 60
         return f"{hours:02d}:{mins:02d}:{secs:02d}"
     return f"{mins:02d}:{secs:02d}"
+
+
+def parse_speed_03_bahs_identify_timestamps_all(raw_input, default_speed=1.5):
+    cleaned = raw_input.strip()
+    if not cleaned:
+        return float(default_speed), True
+
+    normalized = cleaned.lower().rstrip("x").strip().replace(",", ".")
+    try:
+        value = float(normalized)
+        if value <= 0:
+            logging.warning(f"[{NOME_SCRIPT}] Velocità non positiva ('{raw_input}'). Imposto 1.0x.")
+            return 1.0, False
+        return value, True
+    except ValueError:
+        logging.warning(f"[{NOME_SCRIPT}] Valore velocità non valido ('{raw_input}'). Imposto {default_speed}x.")
+        return float(default_speed), False
 
 
 def put_contrasted_text_03_bahs_identify_timestamps_all(frame, text, org, font_scale, color, thickness=2):
@@ -113,7 +131,8 @@ def draw_overlay_03_bahs_identify_timestamps_all(frame, current_sec, total_sec, 
     put_contrasted_text_03_bahs_identify_timestamps_all(frame, f"Sessione: {session_label}", (20, 45), 0.9, (0, 255, 255), 2)
 
     time_str = seconds_to_time_str_03_bahs_identify_timestamps_all(current_sec)
-    status_text = "PAUSA (Premi P per riprendere)" if paused else f"IN RIPRODUZIONE ({speed}x)"
+    speed_label = f"{speed:g}x"
+    status_text = "PAUSA (Premi P per riprendere)" if paused else f"IN RIPRODUZIONE ({speed_label})"
     status_color = (0, 165, 255) if paused else (0, 255, 0)
 
     put_contrasted_text_03_bahs_identify_timestamps_all(frame, f"Tempo: {time_str}", (20, 90), 0.9, (255, 255, 255), 2)
@@ -172,21 +191,26 @@ def record_timestamps_03_bahs_identify_timestamps_all():
             successo_processo = False
             return
 
-        speed_input = input("🚀 Velocità di riproduzione [Default: 1.5]: ").strip()
-        try:
-            speed = float(speed_input) if speed_input else 1.5
-            if speed <= 0:
-                speed = 1.0
-        except ValueError:
-            speed = 1.5
+        speed_input = input("🚀 Velocità di riproduzione (es. 1, 1.5, 2, 4, o 8) [Default: 1.5]: ")
+        speed, _ = parse_speed_03_bahs_identify_timestamps_all(speed_input, default_speed=1.5)
 
         cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            logging.error(f"[{NOME_SCRIPT}] Impossibile aprire il flusso video: {video_path}")
+            successo_processo = False
+            return
+
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps <= 0:
             fps = 25.0
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         total_sec = total_frames / fps if fps > 0 else 0
+
+        logging.info(
+            f"[{NOME_SCRIPT}] Video: '{video_name}' | FPS: {fps:.2f} | Frame totali: {total_frames} | "
+            f"Velocità impostata: {speed:g}x"
+        )
 
         txt_path = dir_in / "timestamps.txt"
         custom_txt_path = dir_in / f"timestamps_{safe_label}.txt"
@@ -198,22 +222,25 @@ def record_timestamps_03_bahs_identify_timestamps_all():
         recorded_times = []
         paused = False
         flash_timer = 0
-        window_title = f"Player Analisi [{NOME_SCRIPT}] - {session_label} ({speed}x)"
+        window_title = f"Player Analisi [{NOME_SCRIPT}] - {session_label} ({speed:g}x)"
 
         cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
         cv2.setWindowProperty(window_title, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
         ret, current_frame = cap.read()
         if not ret:
+            logging.error(f"[{NOME_SCRIPT}] Impossibile leggere il primo fotogramma.")
             successo_processo = False
             return
 
-        base_delay = int(1000 / fps)
-        delay = max(1, int(base_delay / speed))
+        current_frame_idx = 0
+        current_sec = 0.0
 
-        # --- FIX: Mostra subito il fotogramma e forza il focus sulla finestra ---
+        # Mostra subito il primo fotogramma e forza il focus sulla finestra
         display_frame = current_frame.copy()
-        display_frame = draw_overlay_03_bahs_identify_timestamps_all(display_frame, 0.0, total_sec, speed, paused, recorded_times, flash_timer, session_label)
+        display_frame = draw_overlay_03_bahs_identify_timestamps_all(
+            display_frame, current_sec, total_sec, speed, paused, recorded_times, flash_timer, session_label
+        )
         cv2.imshow(window_title, display_frame)
         cv2.waitKey(1)
 
@@ -224,44 +251,102 @@ def record_timestamps_03_bahs_identify_timestamps_all():
                     ctypes.windll.user32.SetForegroundWindow(hwnd)
             except Exception:
                 pass
-        # ----------------------------------------------------------------------
 
         pbar = None
         if tqdm is not None and total_frames > 0:
             pbar = tqdm(total=total_frames, desc="Analisi Video", unit="frame", colour="blue")
 
+        # Ancoraggio temporale reale per mantenere la velocità esatta (1x, 1.5x, 2x, 4x, 8x...)
+        anchor_wall_time = time.perf_counter()
+        anchor_video_sec = 0.0
+
         try:
             while cap.isOpened():
                 if not paused:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    current_frame = frame
+                    now = time.perf_counter()
+                    expected_video_sec = anchor_video_sec + (now - anchor_wall_time) * speed
+                    target_frame_idx = int(expected_video_sec * fps)
 
-                current_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-                current_sec = current_msec / 1000.0
+                    if total_frames > 0 and target_frame_idx >= total_frames:
+                        break
+
+                    frames_to_advance = target_frame_idx - current_frame_idx
+
+                    if frames_to_advance > 0:
+                        # Se dobbiamo saltare più frame per stare al passo (es. 4x / 8x), usiamo grab() per quelli intermedi
+                        grabbed_ok = True
+                        for _ in range(frames_to_advance - 1):
+                            if not cap.grab():
+                                grabbed_ok = False
+                                break
+                        if not grabbed_ok:
+                            break
+
+                        if not cap.grab():
+                            break
+                        ret, frame = cap.retrieve()
+                        if not ret or frame is None:
+                            break
+
+                        current_frame = frame
+                        current_frame_idx = target_frame_idx
+                        current_sec = current_frame_idx / fps
 
                 if pbar is not None:
-                    current_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-                    if current_pos > pbar.n:
-                        pbar.update(min(total_frames - pbar.n, current_pos - pbar.n))
-                    elif current_pos < pbar.n:
-                        pbar.n = max(0, min(total_frames, current_pos))
+                    target_pbar = min(total_frames, current_frame_idx + 1)
+                    if target_pbar > pbar.n:
+                        pbar.update(target_pbar - pbar.n)
+                    elif target_pbar < pbar.n:
+                        pbar.n = max(0, target_pbar)
                         pbar.refresh()
 
                 display_frame = current_frame.copy()
-                display_frame = draw_overlay_03_bahs_identify_timestamps_all(display_frame, current_sec, total_sec, speed, paused, recorded_times, flash_timer, session_label)
+                display_frame = draw_overlay_03_bahs_identify_timestamps_all(
+                    display_frame, current_sec, total_sec, speed, paused, recorded_times, flash_timer, session_label
+                )
                 cv2.imshow(window_title, display_frame)
 
-                key = cv2.waitKey(delay if not paused else 30) & 0xFF
+                # Calcola esattamente quanti millisecondi mancano al prossimo fotogramma
+                if paused:
+                    wait_ms = 30
+                else:
+                    next_frame_video_sec = (current_frame_idx + 1) / fps
+                    time_until_next_frame = (next_frame_video_sec - anchor_video_sec) / speed - (time.perf_counter() - anchor_wall_time)
+                    wait_ms = max(1, int(time_until_next_frame * 1000))
+
+                key = cv2.waitKey(wait_ms) & 0xFF
                 if key in (ord('q'), ord('Q')):
                     break
                 elif key in (ord('p'), ord('P')):
                     paused = not paused
+                    if not paused:
+                        # Riallinea l'ancora temporale quando esce dalla pausa
+                        anchor_wall_time = time.perf_counter()
+                        anchor_video_sec = current_sec
                 elif key in (ord('f'), ord('F')):
-                    cap.set(cv2.CAP_PROP_POS_MSEC, current_msec + 5000)
+                    target_sec = min(total_sec, current_sec + 5.0)
+                    target_frame = int(round(target_sec * fps))
+                    if total_frames > 0:
+                        target_frame = min(total_frames - 1, max(0, target_frame))
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                    ret, frame = cap.read()
+                    if ret:
+                        current_frame = frame
+                        current_frame_idx = target_frame
+                        current_sec = current_frame_idx / fps
+                        anchor_wall_time = time.perf_counter()
+                        anchor_video_sec = current_sec
                 elif key in (ord('r'), ord('R')):
-                    cap.set(cv2.CAP_PROP_POS_MSEC, max(0, current_msec - 5000))
+                    target_sec = max(0.0, current_sec - 5.0)
+                    target_frame = max(0, int(round(target_sec * fps)))
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                    ret, frame = cap.read()
+                    if ret:
+                        current_frame = frame
+                        current_frame_idx = target_frame
+                        current_sec = current_frame_idx / fps
+                        anchor_wall_time = time.perf_counter()
+                        anchor_video_sec = current_sec
                 elif key == 32:
                     time_str = seconds_to_time_str_03_bahs_identify_timestamps_all(current_sec)
                     if time_str not in recorded_times:
