@@ -15,12 +15,12 @@ except ImportError:
 SCRIPT_NAME = "09_BAHS_add-text-overlay-1080P"
 INPUT_DIR = "FINAL"
 OUTPUT_DIR = "FINAL"
-DEFAULT_INPUT_VIDEO = os.path.join(INPUT_DIR, "video_finale_merged_1080p_music.mp4")
+DEFAULT_VIDEO_NAME = "video_finale_merged_1080p_music.mp4"
+DEFAULT_INPUT_VIDEO = os.path.join(INPUT_DIR, DEFAULT_VIDEO_NAME)
 DEFAULT_OUTPUT_FILE = os.path.join(OUTPUT_DIR, "video_finale_merged_1080p_music_text.mp4")
 EXTRA_DIR = "EXTRA"
 LOG_DIR = "LOG"
 TMP_DIR = "TMP"
-TARGET_VIDEO_PREFIX = "video_finale_merged_1080p_music"
 
 # Formato standard Full HD orizzontale (16:9)
 VIDEO_WIDTH = 1920
@@ -163,32 +163,51 @@ def get_logo_dimensions_09_bahs_add_text_overlay_1080p() -> tuple[int, int]:
     return FHD_LOGO_WIDTH, FHD_LOGO_WIDTH
 
 
-def select_1080p_music_video_09_bahs_add_text_overlay_1080p(input_dir: str, raw_input: str) -> str | None:
-    """Seleziona solo video il cui nome inizia con 'video_finale_merged_1080p_music'."""
-    if raw_input:
-        candidate = raw_input
-        if os.path.isdir(candidate):
-            candidate = os.path.join(candidate, "video_finale_merged_1080p_music.mp4")
-        stem = Path(candidate).stem.lower()
-        if not stem.startswith(TARGET_VIDEO_PREFIX) or "_reel" in stem:
-            return None
-        return candidate
+def resolve_final_video_09_bahs_add_text_overlay_1080p(input_dir: str, raw_input: str) -> tuple[str | None, str | None]:
+    """
+    Risolve e valida un video esclusivamente all'interno di `input_dir` ('FINAL').
+    Restituisce (input_path, output_path) oppure (None, motivo_errore).
+    """
+    final_root = Path(input_dir).resolve()
+    cleaned = raw_input.strip().strip('"').strip("'")
 
-    if os.path.isfile(DEFAULT_INPUT_VIDEO):
-        return DEFAULT_INPUT_VIDEO
+    if not cleaned:
+        candidate = (final_root / DEFAULT_VIDEO_NAME).resolve()
+    else:
+        raw_path = Path(cleaned)
+        # Se è un percorso relativo che inizia già per 'FINAL/' o 'FINAL\', lo risolviamo rispetto alla cwd
+        if not raw_path.is_absolute() and len(raw_path.parts) > 0 and raw_path.parts[0].lower() == input_dir.lower():
+            candidate = raw_path.resolve()
+        elif raw_path.is_absolute():
+            candidate = raw_path.resolve()
+        else:
+            # L'utente ha inserito un nome file (es. "mio_video.mp4" o "mio_video")
+            candidate = (final_root / raw_path).resolve()
 
-    if os.path.isdir(input_dir):
-        matches = sorted([
-            os.path.join(input_dir, f)
-            for f in os.listdir(input_dir)
-            if f.lower().startswith(TARGET_VIDEO_PREFIX)
-            and "_reel" not in f.lower()
-            and f.lower().endswith(".mp4")
-        ])
-        if matches:
-            return matches[0]
+        # Se non ha estensione, prova con .mp4 dentro FINAL
+        if not candidate.suffix and not candidate.exists():
+            candidate = candidate.with_suffix(".mp4").resolve()
 
-    return DEFAULT_INPUT_VIDEO
+    # Verifica stretta: il file deve risiedere direttamente o in una sottocartella di FINAL
+    try:
+        candidate.relative_to(final_root)
+    except ValueError:
+        return None, f"Sono accettati esclusivamente video situati all'interno della cartella '{input_dir}'."
+
+    if not candidate.is_file():
+        return None, f"Il file '{candidate.name}' non esiste nella cartella '{input_dir}'."
+
+    out_dir = Path(OUTPUT_DIR).resolve()
+    if candidate.stem.lower() == Path(DEFAULT_VIDEO_NAME).stem.lower():
+        out_path = out_dir / f"{candidate.stem}_text{candidate.suffix or '.mp4'}"
+    else:
+        out_path = out_dir / f"{candidate.stem}_text{candidate.suffix or '.mp4'}"
+
+    # Evita che output e input coincidano esattamente
+    if out_path.resolve() == candidate:
+        out_path = out_dir / f"{candidate.stem}_overlay{candidate.suffix or '.mp4'}"
+
+    return str(candidate), str(out_path)
 
 
 def _parse_out_time_to_ms_09_bahs_add_text_overlay_1080p(line: str) -> int | None:
@@ -443,7 +462,7 @@ def main_09_bahs_add_text_overlay_1080p():
     print(f" TEXT OVERLAY 1080P: {SCRIPT_NAME}")
     print(f" Formato target: {VIDEO_WIDTH}x{VIDEO_HEIGHT} (16:9 Full HD)")
     print(f" [Hardware Rilevato] Thread logici: {TOTAL_THREADS} | Worker: {MAX_WORKERS} | Thread/Worker: {THREADS_PER_WORKER}")
-    print(f" Output previsto in FINAL: '{DEFAULT_OUTPUT_FILE}'")
+    print(f" Cartella input/output consentita: '{INPUT_DIR}/'")
     print(f" Data e ora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
 
@@ -451,27 +470,25 @@ def main_09_bahs_add_text_overlay_1080p():
     check_ffmpeg_09_bahs_add_text_overlay_1080p(logger)
 
     try:
-        raw_video_input = input(f"\n📁 Inserisci il percorso del video MP4 [Default: {DEFAULT_INPUT_VIDEO}]: ").strip()
-        video_input = select_1080p_music_video_09_bahs_add_text_overlay_1080p(INPUT_DIR, raw_video_input)
+        raw_video_input = input(
+            f"\n📁 Inserisci il nome del video in '{INPUT_DIR}' [Default: {DEFAULT_VIDEO_NAME}]: "
+        ).strip()
 
-        if not video_input:
-            msg = f"Sono accettati solo video 1080P che iniziano con '{TARGET_VIDEO_PREFIX}'."
-            print(f"\n[!] Errore: {msg}")
-            logger.warning(f"[{SCRIPT_NAME}] {msg} Input ricevuto: '{raw_video_input}'")
+        video_input, output_file = resolve_final_video_09_bahs_add_text_overlay_1080p(INPUT_DIR, raw_video_input)
+
+        if not video_input or not output_file:
+            err_msg = output_file or f"Video non valido per la cartella '{INPUT_DIR}'."
+            print(f"\n[!] Errore: {err_msg}")
+            logger.warning(f"[{SCRIPT_NAME}] {err_msg} Input ricevuto: '{raw_video_input}'")
             return
-
-        if not os.path.exists(video_input):
-            print(f"\n[!] Errore: File video '{video_input}' non trovato.")
-            logger.error(f"[{SCRIPT_NAME}] File video '{video_input}' non trovato.")
-            return
-
-        output_file = DEFAULT_OUTPUT_FILE
 
         dynamic_input = input("📝 Inserisci il testo dinamico inferiore [Default: CAMPIONATO - TEAM vs TEAM]: ").strip()
         if not dynamic_input:
             dynamic_input = "CAMPIONATO - TEAM vs TEAM"
 
-        print(f"\n🎬 Elaborazione video 1080P in corso -> Output: '{output_file}'...\n")
+        print(f"\n🎬 Elaborazione video 1080P in corso...")
+        print(f"   Input : '{video_input}'")
+        print(f"   Output: '{output_file}'\n")
         logger.info(f"[{SCRIPT_NAME}] Input: {video_input} | Output: {output_file}")
 
         if apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(video_input, output_file, dynamic_input, duration=5.0, logger=logger):
