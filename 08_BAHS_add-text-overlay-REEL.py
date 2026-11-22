@@ -20,7 +20,6 @@ DEFAULT_OUTPUT_FILE = os.path.join(OUTPUT_DIR, "video_finale_merged_reel_music_t
 EXTRA_DIR = "EXTRA"
 LOG_DIR = "LOG"
 TMP_DIR = "TMP"
-TARGET_VIDEO_PREFIX = "video_finale_merged_reel_music"
 
 # Formato standard Facebook Reels (9:16 verticale)
 REEL_WIDTH = 1080
@@ -163,30 +162,59 @@ def get_logo_dimensions_08_bahs_add_text_overlay_reel() -> tuple[int, int]:
     return REEL_LOGO_WIDTH, REEL_LOGO_WIDTH
 
 
-def select_reel_music_video_08_bahs_add_text_overlay_reel(input_dir: str, raw_input: str) -> str | None:
-    """Seleziona solo video il cui nome inizia con 'video_finale_merged_reel_music'."""
-    if raw_input:
-        candidate = raw_input
-        if os.path.isdir(candidate):
-            candidate = os.path.join(candidate, "video_finale_merged_reel_music.mp4")
-        stem = Path(candidate).stem.lower()
-        if not stem.startswith(TARGET_VIDEO_PREFIX):
-            return None
-        return candidate
+def list_mp4_in_final_08_bahs_add_text_overlay_reel(input_dir: str = INPUT_DIR) -> list[str]:
+    """Restituisce i file .mp4 in FINAL escludendo quelli che terminano con '_logo' o '_text'."""
+    if not os.path.isdir(input_dir):
+        return []
 
-    if os.path.isfile(DEFAULT_INPUT_VIDEO):
+    files = []
+    for entry in sorted(os.listdir(input_dir)):
+        p = Path(input_dir) / entry
+        if not p.is_file():
+            continue
+        stem_lower = p.stem.lower()
+        if p.suffix.lower() == ".mp4" and not stem_lower.endswith("_logo") and not stem_lower.endswith("_text"):
+            files.append(str(p))
+    return files
+
+
+def resolve_input_video_08_bahs_add_text_overlay_reel(
+    raw_input: str,
+    available_files: list[str] | None = None,
+) -> str:
+    """Risolve il percorso del video di partenza (default con Invio, indice, nome in FINAL o percorso custom)."""
+    cleaned = raw_input.strip().strip('"').strip("'")
+
+    if not cleaned:
         return DEFAULT_INPUT_VIDEO
 
-    if os.path.isdir(input_dir):
-        matches = sorted([
-            os.path.join(input_dir, f)
-            for f in os.listdir(input_dir)
-            if f.lower().startswith(TARGET_VIDEO_PREFIX) and f.lower().endswith(".mp4")
-        ])
-        if matches:
-            return matches[0]
+    # Selezione per indice numerico dall'elenco mostrato
+    if available_files and cleaned.isdigit():
+        idx = int(cleaned) - 1
+        if 0 <= idx < len(available_files):
+            return available_files[idx]
 
-    return DEFAULT_INPUT_VIDEO
+    # Se viene indicata una cartella, usa il file di default dentro quella cartella
+    if os.path.isdir(cleaned):
+        return os.path.join(cleaned, os.path.basename(DEFAULT_INPUT_VIDEO))
+
+    # Se il percorso esiste già così com'è, lo restituisce direttamente
+    if os.path.exists(cleaned):
+        return cleaned
+
+    # Altrimenti cerca dentro INPUT_DIR aggiungendo .mp4 se mancante
+    candidate_name = cleaned if cleaned.lower().endswith(".mp4") else f"{cleaned}.mp4"
+    in_final = os.path.join(INPUT_DIR, os.path.basename(candidate_name))
+    return in_final
+
+
+def resolve_output_video_08_bahs_add_text_overlay_reel(input_video: str) -> str:
+    """Determina il file di output in FINAL in base al video di input."""
+    if os.path.abspath(input_video) == os.path.abspath(DEFAULT_INPUT_VIDEO):
+        return DEFAULT_OUTPUT_FILE
+
+    stem = Path(input_video).stem
+    return os.path.join(OUTPUT_DIR, f"{stem}_text.mp4")
 
 
 def _parse_out_time_to_ms_08_bahs_add_text_overlay_reel(line: str) -> int | None:
@@ -452,27 +480,31 @@ def main_08_bahs_add_text_overlay_reel():
     check_ffmpeg_08_bahs_add_text_overlay_reel(logger)
 
     try:
-        raw_video_input = input(f"\n📁 Inserisci il percorso del video MP4 [Default: {DEFAULT_INPUT_VIDEO}]: ").strip()
-        video_input = select_reel_music_video_08_bahs_add_text_overlay_reel(INPUT_DIR, raw_video_input)
+        mp4_files = list_mp4_in_final_08_bahs_add_text_overlay_reel(INPUT_DIR)
+        if mp4_files:
+            print(f"\n--- VIDEO MP4 DISPONIBILI IN '{INPUT_DIR}' (esclusi '*_logo' e '*_text') ---")
+            for idx, fpath in enumerate(mp4_files, start=1):
+                marker = " [DEFAULT]" if os.path.abspath(fpath) == os.path.abspath(DEFAULT_INPUT_VIDEO) else ""
+                print(f"  {idx}. {os.path.basename(fpath)}{marker}")
 
-        if not video_input:
-            msg = f"Sono accettati solo video che iniziano con '{TARGET_VIDEO_PREFIX}'."
-            print(f"\n[!] Errore: {msg}")
-            logger.warning(f"[{SCRIPT_NAME}] {msg} Input ricevuto: '{raw_video_input}'")
-            return
+        raw_video_input = input(
+            f"\n📁 Numero, nome in '{INPUT_DIR}' o percorso [INVIO = {os.path.basename(DEFAULT_INPUT_VIDEO)}]: "
+        ).strip()
+        video_input = resolve_input_video_08_bahs_add_text_overlay_reel(raw_video_input, mp4_files)
 
         if not os.path.exists(video_input):
             print(f"\n[!] Errore: File video '{video_input}' non trovato.")
             logger.error(f"[{SCRIPT_NAME}] File video '{video_input}' non trovato.")
             return
 
-        output_file = DEFAULT_OUTPUT_FILE
+        output_file = resolve_output_video_08_bahs_add_text_overlay_reel(video_input)
 
         dynamic_input = input("📝 Inserisci il testo dinamico inferiore [Default: CAMPIONATO - TEAM vs TEAM]: ").strip()
         if not dynamic_input:
             dynamic_input = "CAMPIONATO - TEAM vs TEAM"
 
-        print(f"\n🎬 Elaborazione Reel in corso -> Output: '{output_file}'...\n")
+        print(f"\n🎬 Video input: '{video_input}'")
+        print(f"💾 Elaborazione Reel in corso -> Output: '{output_file}'...\n")
         logger.info(f"[{SCRIPT_NAME}] Input: {video_input} | Output: {output_file}")
 
         if apply_text_overlay_reel_08_bahs_add_text_overlay_reel(video_input, output_file, dynamic_input, duration=5.0, logger=logger):
