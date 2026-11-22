@@ -140,16 +140,54 @@ def prompt_format_mode_10_bahs_add_logo_overlay_all() -> str:
         print("[!] Scelta non valida. Inserisci 1 (1080P), 2 (REEL) oppure premi INVIO.")
 
 
-def resolve_input_video_10_bahs_add_logo_overlay_all(mode: str, raw_input: str) -> str:
-    """Risolve il percorso del video di partenza (default in base alla modalità o percorso custom)."""
+def list_mp4_in_final_10_bahs_add_logo_overlay_all(input_dir: str = INPUT_DIR) -> list[str]:
+    """Restituisce i file .mp4 in FINAL escludendo quelli che terminano con '_logo'."""
+    if not os.path.isdir(input_dir):
+        return []
+
+    files = []
+    for entry in sorted(os.listdir(input_dir)):
+        p = Path(input_dir) / entry
+        if not p.is_file():
+            continue
+        if p.suffix.lower() == ".mp4" and not p.stem.lower().endswith("_logo"):
+            files.append(str(p))
+    return files
+
+
+def resolve_input_video_10_bahs_add_logo_overlay_all(
+    mode: str,
+    raw_input: str,
+    available_files: list[str] | None = None,
+) -> str:
+    """Risolve il percorso del video di partenza (default con Invio, indice, nome in FINAL o percorso custom)."""
     default_video = DEFAULT_1080P_INPUT if mode == "1080p" else DEFAULT_REEL_INPUT
-    if not raw_input:
+    cleaned = raw_input.strip().strip('"').strip("'")
+
+    if not cleaned:
         return default_video
 
-    cleaned = raw_input.strip().strip('"').strip("'")
+    # Selezione per indice numerico dall'elenco mostrato
+    if available_files and cleaned.isdigit():
+        idx = int(cleaned) - 1
+        if 0 <= idx < len(available_files):
+            return available_files[idx]
+
+    # Se viene indicata una cartella, usa il file di default dentro quella cartella
     if os.path.isdir(cleaned):
         return os.path.join(cleaned, os.path.basename(default_video))
-    return cleaned
+
+    # Se il percorso esiste già così com'è, lo restituisce direttamente
+    if os.path.exists(cleaned):
+        return cleaned
+
+    # Altrimenti cerca dentro INPUT_DIR aggiungendo .mp4 se mancante
+    candidate_name = cleaned if cleaned.lower().endswith(".mp4") else f"{cleaned}.mp4"
+    in_final = os.path.join(INPUT_DIR, os.path.basename(candidate_name))
+    if os.path.exists(in_final):
+        return in_final
+
+    return in_final
 
 
 def resolve_output_video_10_bahs_add_logo_overlay_all(mode: str, input_video: str) -> str:
@@ -460,8 +498,17 @@ def main_10_bahs_add_logo_overlay_all():
             logger.error(f"[{SCRIPT_NAME}] {msg}")
             return
 
-        raw_video_input = input(f"\n📁 Inserisci il percorso del video MP4 [Default {mode_label}: {default_video}]: ").strip()
-        video_input = resolve_input_video_10_bahs_add_logo_overlay_all(mode, raw_video_input)
+        mp4_files = list_mp4_in_final_10_bahs_add_logo_overlay_all(INPUT_DIR)
+        if mp4_files:
+            print(f"\n--- VIDEO MP4 DISPONIBILI IN '{INPUT_DIR}' (esclusi '*_logo') ---")
+            for idx, fpath in enumerate(mp4_files, start=1):
+                marker = " [DEFAULT]" if os.path.abspath(fpath) == os.path.abspath(default_video) else ""
+                print(f"  {idx}. {os.path.basename(fpath)}{marker}")
+
+        raw_video_input = input(
+            f"\n📁 Numero, nome in '{INPUT_DIR}' o percorso [INVIO = {os.path.basename(default_video)}]: "
+        ).strip()
+        video_input = resolve_input_video_10_bahs_add_logo_overlay_all(mode, raw_video_input, mp4_files)
 
         if not os.path.exists(video_input):
             print(f"\n[!] Errore: File video '{video_input}' non trovato.")
