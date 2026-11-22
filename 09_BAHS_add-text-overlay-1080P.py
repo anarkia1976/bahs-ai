@@ -22,6 +22,13 @@ EXTRA_DIR = "EXTRA"
 LOG_DIR = "LOG"
 TMP_DIR = "TMP"
 
+DEFAULT_TOP_TEXT = "HIHGLIGHTS"
+TOP_TEXT_PRESETS = [
+    "HIGHLIGHTS",
+    "GAMEDAY",
+    "FRIENDLY MATCH",
+]
+
 # Formato standard Full HD orizzontale (16:9)
 VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
@@ -98,6 +105,20 @@ def escape_drawtext_09_bahs_add_text_overlay_1080p(text: str) -> str:
     escaped = escaped.replace("'", "’")
     escaped = escaped.replace("%", "\\%")
     return escaped
+
+
+def resolve_top_text_09_bahs_add_text_overlay_1080p(raw_input: str) -> str:
+    """Risolve il testo superiore da INVIO (default), indice preset o testo libero."""
+    cleaned = raw_input.strip()
+    if not cleaned:
+        return DEFAULT_TOP_TEXT
+
+    if cleaned.isdigit():
+        idx = int(cleaned) - 1
+        if 0 <= idx < len(TOP_TEXT_PRESETS):
+            return TOP_TEXT_PRESETS[idx]
+
+    return cleaned
 
 
 def has_audio_stream_09_bahs_add_text_overlay_1080p(video_path: str) -> bool:
@@ -371,7 +392,14 @@ def run_ffmpeg_with_progress_09_bahs_add_text_overlay_1080p(
         return False
 
 
-def apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(video_path, output_path, dynamic_text, duration=5.0, logger=None):
+def apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(
+    video_path,
+    output_path,
+    dynamic_text,
+    top_text=DEFAULT_TOP_TEXT,
+    duration=5.0,
+    logger=None,
+):
     setup_directories_09_bahs_add_text_overlay_1080p()
     extra_font = Path(EXTRA_DIR) / "font.ttf"
     tmp_font = Path(TMP_DIR) / "font.ttf"
@@ -389,6 +417,7 @@ def apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(video_path, output_p
         if logger:
             logger.warning(f"[{SCRIPT_NAME}] {msg}")
 
+    safe_top_text = escape_drawtext_09_bahs_add_text_overlay_1080p(top_text)
     safe_dynamic_text = escape_drawtext_09_bahs_add_text_overlay_1080p(dynamic_text)
 
     _, logo_scaled_h = get_logo_dimensions_09_bahs_add_text_overlay_1080p()
@@ -399,7 +428,7 @@ def apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(video_path, output_p
     line_height = 4
     # Centro verticale della linea verde allineato al centro verticale del logo 1080P
     line_y = logo_center_y - (line_height // 2)
-    # Testo "HIGHLIGHTS" sopra la linea verde e testo dinamico sotto la linea verde
+    # Testo superiore sopra la linea verde e testo dinamico sotto la linea verde
     base_y = line_y - 72
     dynamic_y = line_y + 24
     line_width = 750
@@ -412,7 +441,8 @@ def apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(video_path, output_p
     if logger:
         logger.info(
             f"[{SCRIPT_NAME}] Linea verde allineata al centro del logo 1080P: "
-            f"logo_center_y={logo_center_y}, line_y={line_y}, base_y={base_y}, dynamic_y={dynamic_y}"
+            f"logo_center_y={logo_center_y}, line_y={line_y}, base_y={base_y}, dynamic_y={dynamic_y} | "
+            f"top_text='{top_text}' | dynamic_text='{dynamic_text}'"
         )
 
     x_expr = (
@@ -432,7 +462,7 @@ def apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(video_path, output_p
     filter_complex = (
         f"[0:v]scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
         f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v_norm];"
-        f"[v_norm]drawtext={font_clause}text='HIGHLIGHTS':"
+        f"[v_norm]drawtext={font_clause}text='{safe_top_text}':"
         f"fontcolor=white:fontsize=64:borderw=3:bordercolor=black:"
         f"x={base_x}:y={base_y}:alpha='{alpha_expr}':"
         f"enable='between(t,0,{duration})'[txt_top];"
@@ -519,16 +549,36 @@ def main_09_bahs_add_text_overlay_1080p():
             logger.warning(f"[{SCRIPT_NAME}] {err_msg} Input ricevuto: '{raw_video_input}'")
             return
 
+        print("\n--- OPZIONI TESTO SUPERIORE (SOPRA LA LINEA VERDE) ---")
+        for idx, preset in enumerate(TOP_TEXT_PRESETS, start=1):
+            print(f"  {idx}. {preset}")
+        print(f"  Oppure digita un testo personalizzato [INVIO = {DEFAULT_TOP_TEXT}]")
+
+        raw_top_input = input("🔝 Scelta o testo superiore: ")
+        top_input = resolve_top_text_09_bahs_add_text_overlay_1080p(raw_top_input)
+
         dynamic_input = input("📝 Inserisci il testo dinamico inferiore [Default: CAMPIONATO - TEAM vs TEAM]: ").strip()
         if not dynamic_input:
             dynamic_input = "CAMPIONATO - TEAM vs TEAM"
 
         print(f"\n🎬 Elaborazione video 1080P in corso...")
-        print(f"   Input : '{video_input}'")
-        print(f"   Output: '{output_file}'\n")
-        logger.info(f"[{SCRIPT_NAME}] Input: {video_input} | Output: {output_file}")
+        print(f"   Input           : '{video_input}'")
+        print(f"   Testo superiore : '{top_input}'")
+        print(f"   Testo inferiore : '{dynamic_input}'")
+        print(f"   Output          : '{output_file}'\n")
+        logger.info(
+            f"[{SCRIPT_NAME}] Input: {video_input} | Output: {output_file} | "
+            f"Top: {top_input} | Bottom: {dynamic_input}"
+        )
 
-        if apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(video_input, output_file, dynamic_input, duration=5.0, logger=logger):
+        if apply_text_overlay_1080p_09_bahs_add_text_overlay_1080p(
+            video_input,
+            output_file,
+            dynamic_input,
+            top_text=top_input,
+            duration=5.0,
+            logger=logger,
+        ):
             print(f"\n\n[✔] Elaborazione completata! File: {output_file}")
             logger.info(f"[{SCRIPT_NAME}] Elaborazione completata con successo: {output_file}")
         else:
