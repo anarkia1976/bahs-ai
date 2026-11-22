@@ -163,7 +163,27 @@ def get_logo_dimensions_09_bahs_add_text_overlay_1080p() -> tuple[int, int]:
     return FHD_LOGO_WIDTH, FHD_LOGO_WIDTH
 
 
-def resolve_final_video_09_bahs_add_text_overlay_1080p(input_dir: str, raw_input: str) -> tuple[str | None, str | None]:
+def list_mp4_in_final_09_bahs_add_text_overlay_1080p(input_dir: str = INPUT_DIR) -> list[str]:
+    """Restituisce i file .mp4 in FINAL escludendo quelli che terminano con '_logo' o '_text'."""
+    if not os.path.isdir(input_dir):
+        return []
+
+    files = []
+    for entry in sorted(os.listdir(input_dir)):
+        p = Path(input_dir) / entry
+        if not p.is_file():
+            continue
+        stem_lower = p.stem.lower()
+        if p.suffix.lower() == ".mp4" and not stem_lower.endswith("_logo") and not stem_lower.endswith("_text"):
+            files.append(str(p))
+    return files
+
+
+def resolve_final_video_09_bahs_add_text_overlay_1080p(
+    input_dir: str,
+    raw_input: str,
+    available_files: list[str] | None = None,
+) -> tuple[str | None, str | None]:
     """
     Risolve e valida un video esclusivamente all'interno di `input_dir` ('FINAL').
     Restituisce (input_path, output_path) oppure (None, motivo_errore).
@@ -173,6 +193,12 @@ def resolve_final_video_09_bahs_add_text_overlay_1080p(input_dir: str, raw_input
 
     if not cleaned:
         candidate = (final_root / DEFAULT_VIDEO_NAME).resolve()
+    elif available_files and cleaned.isdigit():
+        idx = int(cleaned) - 1
+        if 0 <= idx < len(available_files):
+            candidate = Path(available_files[idx]).resolve()
+        else:
+            return None, f"Indice '{cleaned}' non valido nell'elenco di '{input_dir}'."
     else:
         raw_path = Path(cleaned)
         # Se è un percorso relativo che inizia già per 'FINAL/' o 'FINAL\', lo risolviamo rispetto alla cwd
@@ -470,11 +496,22 @@ def main_09_bahs_add_text_overlay_1080p():
     check_ffmpeg_09_bahs_add_text_overlay_1080p(logger)
 
     try:
+        mp4_files = list_mp4_in_final_09_bahs_add_text_overlay_1080p(INPUT_DIR)
+        if mp4_files:
+            print(f"\n--- VIDEO MP4 DISPONIBILI IN '{INPUT_DIR}' (esclusi '*_logo' e '*_text') ---")
+            for idx, fpath in enumerate(mp4_files, start=1):
+                marker = " [DEFAULT]" if os.path.abspath(fpath) == os.path.abspath(DEFAULT_INPUT_VIDEO) else ""
+                print(f"  {idx}. {os.path.basename(fpath)}{marker}")
+
         raw_video_input = input(
-            f"\n📁 Inserisci il nome del video in '{INPUT_DIR}' [Default: {DEFAULT_VIDEO_NAME}]: "
+            f"\n📁 Numero o nome del video in '{INPUT_DIR}' [INVIO = {DEFAULT_VIDEO_NAME}]: "
         ).strip()
 
-        video_input, output_file = resolve_final_video_09_bahs_add_text_overlay_1080p(INPUT_DIR, raw_video_input)
+        video_input, output_file = resolve_final_video_09_bahs_add_text_overlay_1080p(
+            INPUT_DIR,
+            raw_video_input,
+            mp4_files,
+        )
 
         if not video_input or not output_file:
             err_msg = output_file or f"Video non valido per la cartella '{INPUT_DIR}'."
